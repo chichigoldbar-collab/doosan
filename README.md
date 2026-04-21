@@ -96,6 +96,13 @@ supabase functions deploy process-completed-games
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+선택 환경변수:
+
+- `DISCORD_WEBHOOK_URL`
+- `DISCORD_MENTION`
+- `DISCORD_ALERT_TITLE`
+- `APP_BASE_URL`
+
 로컬 실행:
 
 ```bash
