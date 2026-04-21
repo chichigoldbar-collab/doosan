@@ -31,7 +31,6 @@
 ## 포함되지 않은 것
 
 - 실제 KBO 데이터 소스 연동 키
-- OpenAI API 키
 - 실제 Supabase 프로젝트 연결 및 배포
 - 네이버 블로그 자동 발행
 
@@ -70,17 +69,15 @@ src/
 2. `supabase login`
 3. `supabase link --project-ref <your-project-ref>`
 4. 마이그레이션 적용
-5. Edge Function 시크릿 등록
-6. 함수 배포
-7. Cron 등록
-8. Vercel에 프론트 배포
-9. 웹 UI에서 연결 테스트
+5. 함수 배포
+6. Cron 등록
+7. Vercel에 프론트 배포
+8. 웹 UI에서 연결 테스트
 
 ## 배포 명령 예시
 
 ```bash
 supabase db push
-supabase secrets set OPENAI_API_KEY=your_key
 supabase secrets set KBO_SOURCE_BASE_URL=your_source
 supabase functions deploy fetch-kbo-games
 supabase functions deploy generate-post
