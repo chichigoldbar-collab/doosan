@@ -103,6 +103,12 @@ supabase functions deploy process-completed-games
 - `DISCORD_ALERT_TITLE`
 - `APP_BASE_URL`
 
+알림 동작:
+
+- 초안이 처음 생성되면 디스코드 알림 전송
+- 이후 같은 경기라도 본문/제목/요약이 실제로 바뀌면 업데이트 알림 전송
+- 내용 변화가 없으면 중복 알림 없음
+
 로컬 실행:
 
 ```bash

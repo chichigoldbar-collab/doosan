@@ -31,6 +31,7 @@ type PostRow = {
   id: string;
   title: string | null;
   summary: string | null;
+  body?: string | null;
   status: string;
 };
 
@@ -94,6 +95,42 @@ async function sendDiscordNotification(post: PostRow, game: GameRow): Promise<vo
   }
 }
 
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function postSignature(post: PostRow | null | undefined): string {
+  if (!post) return "";
+  return [
+    normalizeText(post.title),
+    normalizeText(post.summary),
+    normalizeText(post.body),
+  ].join("||");
+}
+
+function isMeaningfullyDifferent(before: PostRow | null | undefined, after: PostRow | null | undefined): boolean {
+  return postSignature(before) !== postSignature(after);
+}
+
+async function generatePostForGame(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  gameId: string,
+): Promise<void> {
+  const generateResponse = await fetch(`${supabaseUrl}/functions/v1/generate-post`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${serviceRoleKey}`,
+    },
+    body: JSON.stringify({ gameId }),
+  });
+
+  if (!generateResponse.ok) {
+    throw new Error(`generate-post failed for game ${gameId}: ${generateResponse.status}`);
+  }
+}
+
 Deno.serve(async () => {
   try {
     const supabaseUrl = getRequiredEnv("SUPABASE_URL");
@@ -124,31 +161,21 @@ Deno.serve(async () => {
 
     const finishedGames = (games ?? []).filter((game) => game.status === "finished");
     const processedGameIds: string[] = [];
+    const updatedGameIds: string[] = [];
 
     for (const game of finishedGames) {
       const { data: existingPost } = await supabase
         .from("posts")
-        .select("id")
+        .select("id, title, summary, body, status")
         .eq("game_id", game.id)
         .maybeSingle();
 
       if (!existingPost) {
-        const generateResponse = await fetch(`${supabaseUrl}/functions/v1/generate-post`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${serviceRoleKey}`,
-          },
-          body: JSON.stringify({ gameId: game.id }),
-        });
-
-        if (!generateResponse.ok) {
-          throw new Error(`generate-post failed for game ${game.id}: ${generateResponse.status}`);
-        }
+        await generatePostForGame(supabaseUrl, serviceRoleKey, game.id);
 
         const { data: createdPost, error: createdPostError } = await supabase
           .from("posts")
-          .select("id, title, summary, status")
+          .select("id, title, summary, body, status")
           .eq("game_id", game.id)
           .single();
 
@@ -167,6 +194,41 @@ Deno.serve(async () => {
         }
 
         await sendDiscordNotification(createdPost as PostRow, gameDetail as GameRow);
+      } else {
+        const previousPost = existingPost as PostRow;
+
+        await generatePostForGame(supabaseUrl, serviceRoleKey, game.id);
+
+        const { data: refreshedPost, error: refreshedPostError } = await supabase
+          .from("posts")
+          .select("id, title, summary, body, status")
+          .eq("game_id", game.id)
+          .single();
+
+        if (refreshedPostError) {
+          throw refreshedPostError;
+        }
+
+        if (isMeaningfullyDifferent(previousPost, refreshedPost as PostRow)) {
+          const { data: gameDetail, error: gameDetailError } = await supabase
+            .from("games")
+            .select("id, game_date, opponent_name, score_for, score_against, result")
+            .eq("id", game.id)
+            .single();
+
+          if (gameDetailError) {
+            throw gameDetailError;
+          }
+
+          await sendDiscordNotification(
+            {
+              ...(refreshedPost as PostRow),
+              title: `[업데이트] ${(refreshedPost as PostRow).title ?? "제목 없음"}`,
+            },
+            gameDetail as GameRow,
+          );
+          updatedGameIds.push(game.id);
+        }
       }
 
       const { data: existingImages } = await supabase
@@ -193,6 +255,7 @@ Deno.serve(async () => {
       ok: true,
       date: targetDate,
       processedGameIds,
+      updatedGameIds,
     });
   } catch (error) {
     return jsonResponse(
