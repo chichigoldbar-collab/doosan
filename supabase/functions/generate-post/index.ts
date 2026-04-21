@@ -22,6 +22,114 @@ function pickBySeed<T>(items: T[], seed: number, offset = 0): T {
   return items[(seed + offset) % items.length];
 }
 
+function formatHitterLine(player: Record<string, unknown>): string {
+  const name = String(player.name ?? "");
+  const hits = player.hits;
+  const rbi = player.rbi;
+  const runs = player.runs;
+  const parts = [`${name}`];
+
+  if (typeof hits === "number") parts.push(`${hits}안타`);
+  if (typeof rbi === "number" && rbi > 0) parts.push(`${rbi}타점`);
+  if (typeof runs === "number" && runs > 0) parts.push(`${runs}득점`);
+
+  return parts.join(" ");
+}
+
+function formatPitcherLine(player: Record<string, unknown>): string {
+  const name = String(player.name ?? "");
+  const innings = String(player.innings ?? "");
+  const strikeouts = player.strikeouts;
+  const hitsAllowed = player.hits_allowed;
+  const runsAllowed = player.runs_allowed;
+  const parts = [name];
+
+  if (innings) parts.push(`${innings}이닝`);
+  if (typeof strikeouts === "number" && strikeouts > 0) parts.push(`${strikeouts}탈삼진`);
+  if (typeof hitsAllowed === "number") parts.push(`${hitsAllowed}피안타`);
+  if (typeof runsAllowed === "number") parts.push(`${runsAllowed}실점`);
+
+  return parts.join(" ");
+}
+
+function trimSentence(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function parseObjectArray(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item && typeof item === "object") as Record<string, unknown>[];
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown[];
+      return Array.isArray(parsed)
+        ? parsed.filter((item) => item && typeof item === "object") as Record<string, unknown>[]
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function sortHitters(players: Record<string, unknown>[]): Record<string, unknown>[] {
+  return [...players]
+    .filter((player) => Number(player.hits ?? 0) > 0 || Number(player.rbi ?? 0) > 0 || Number(player.runs ?? 0) > 0)
+    .sort((a, b) => {
+      const hitDiff = Number(b.hits ?? 0) - Number(a.hits ?? 0);
+      if (hitDiff !== 0) return hitDiff;
+      const rbiDiff = Number(b.rbi ?? 0) - Number(a.rbi ?? 0);
+      if (rbiDiff !== 0) return rbiDiff;
+      return Number(b.runs ?? 0) - Number(a.runs ?? 0);
+    });
+}
+
+function inningsToOuts(value: string): number {
+  const normalized = value.trim();
+  const wholeAndFraction = normalized.match(/^(\d+)\s+(\d)\/3$/);
+  if (wholeAndFraction) {
+    return Number(wholeAndFraction[1]) * 3 + Number(wholeAndFraction[2]);
+  }
+  const fractionOnly = normalized.match(/^(\d)\/3$/);
+  if (fractionOnly) {
+    return Number(fractionOnly[1]);
+  }
+  const wholeOnly = normalized.match(/^(\d+)$/);
+  if (wholeOnly) {
+    return Number(wholeOnly[1]) * 3;
+  }
+  return 0;
+}
+
+function sortPitchers(players: Record<string, unknown>[]): Record<string, unknown>[] {
+  return [...players]
+    .filter((player) => inningsToOuts(String(player.innings ?? "")) > 0)
+    .sort((a, b) => {
+      const outsDiff = inningsToOuts(String(b.innings ?? "")) - inningsToOuts(String(a.innings ?? ""));
+      if (outsDiff !== 0) return outsDiff;
+      const strikeoutDiff = Number(b.strikeouts ?? 0) - Number(a.strikeouts ?? 0);
+      if (strikeoutDiff !== 0) return strikeoutDiff;
+      return Number(a.runs_allowed ?? 0) - Number(b.runs_allowed ?? 0);
+    });
+}
+
 function buildRuleBasedPost(game: Record<string, unknown>) {
   const opponent = String(game.opponent_name ?? "상대팀");
   const result = String(game.result ?? "");
@@ -30,10 +138,16 @@ function buildRuleBasedPost(game: Record<string, unknown>) {
   const venue = String(game.venue ?? "");
   const gameDate = String(game.game_date ?? "");
   const seed = hashString(`${gameDate}-${opponent}-${scoreFor}-${scoreAgainst}-${result}`);
-  const metadata = (game.metadata as Record<string, unknown> | null) ?? {};
+  const metadata = parseObject(game.metadata);
   const winningPitcher = String(metadata.winning_pitcher ?? "").trim();
   const savePitcher = String(metadata.save_pitcher ?? "").trim();
   const losingPitcher = String(metadata.losing_pitcher ?? "").trim();
+  const crowd = String(metadata.crowd ?? "").trim();
+  const runTime = String(metadata.run_time ?? "").trim();
+  const gameEtc = parseObject(metadata.game_etc) as Record<string, string>;
+  const doosanTopHitters = parseObjectArray(metadata.doosan_top_hitters);
+  const doosanPitchers = parseObjectArray(metadata.doosan_pitchers);
+  const breakingNews = parseObject(metadata.breaking_news);
   const keyMoments = toArray(game.key_moments);
   const topPlayers = toArray(game.top_players);
   const poorPlayers = toArray(game.poor_players);
@@ -105,6 +219,34 @@ function buildRuleBasedPost(game: Record<string, unknown>) {
     "팬 입장에서는 이런 흐름을 계속 보고 싶네요 ㅎㅎ 다음 경기에서도 좋은 내용 나와주면 좋겠습니다!",
   ];
 
+  const sortedHitters = sortHitters(doosanTopHitters);
+  const sortedPitchers = sortPitchers(doosanPitchers);
+  const hitterDetailSentence = sortedHitters.length > 0
+    ? `${sortedHitters.slice(0, 2).map(formatHitterLine).join(", ")} 쪽 활약이 확실히 눈에 들어왔습니다.`
+    : "";
+  const pitcherDetailSentence = sortedPitchers.length > 0
+    ? `${formatPitcherLine(sortedPitchers[0])}${sortedPitchers[1] ? `, ${formatPitcherLine(sortedPitchers[1])}` : ""} 정도로 마운드 쪽도 꽤 인상적이었습니다.`
+    : "";
+  const etcDetailSentence = [
+    gameEtc["결승타"] ? `결승타는 ${gameEtc["결승타"]}로 기록됐고요.` : "",
+    gameEtc["홈런"] ? `홈런은 ${gameEtc["홈런"]}처럼 장타 장면도 분명히 있었습니다.` : "",
+    gameEtc["도루"] ? `주루에서는 ${gameEtc["도루"]} 같은 장면도 기억에 남습니다.` : "",
+  ].filter(Boolean).join(" ");
+  const defenseSentence = gameEtc["병살타"]
+    ? `${gameEtc["병살타"]} 같은 병살 장면이 나오면서 수비 집중력도 어느 정도 보였던 경기였습니다.`
+    : "";
+  const gameMetaSentence = [
+    crowd ? `관중은 ${crowd}명이었고` : "",
+    runTime ? `경기 시간은 ${runTime} 정도였는데요.` : "",
+  ].filter(Boolean).join(" ");
+  const breakingNewsTitle = trimSentence(String(breakingNews?.title ?? ""));
+  const breakingNewsSummary = trimSentence(String(breakingNews?.summary ?? ""))
+    .replace(/\.\.\.$/, "")
+    .replace(/…$/, "");
+  const breakingNewsSentence = breakingNewsTitle
+    ? `경기 직후 KBO 기사 제목도 "${breakingNewsTitle}"였는데, ${breakingNewsSummary || "전체 분위기를 꽤 잘 보여주는 표현 같았습니다."}`
+    : "";
+
   const summary =
     result === "win"
       ? pickBySeed(winSummaries, seed, 1)
@@ -124,7 +266,9 @@ function buildRuleBasedPost(game: Record<string, unknown>) {
       : pickBySeed(scoreFlowSentences, seed, 7);
 
   const playerSentence =
-    topPlayers.length > 0
+    hitterDetailSentence
+      ? hitterDetailSentence
+      : topPlayers.length > 0
       ? `${topPlayers.join(", ")} 쪽은 좋은 흐름을 보여줬다고 볼 수 있겠는데요.`
       : winningPitcher
       ? `투수 쪽에서는 ${winningPitcher}${savePitcher ? `, ${savePitcher}` : ""} 이름이 눈에 들어왔던 경기였습니다.`
@@ -137,17 +281,17 @@ function buildRuleBasedPost(game: Record<string, unknown>) {
       ? `${losingPitcher} 쪽 결과가 아쉽게 남은 것도 사실인데요.`
       : pickBySeed(neutralConcernSentences, seed, 8);
 
-  const body = `안녕하세요 토끼돼지입니다~~~!
-
-${pickBySeed(introOpeners, seed, 9)} ${venue ? `${venue}에서 열린 경기였는데요, ` : ""}${summary} ㅎㅎ
-
-최종 스코어는 ${scoreFor}:${scoreAgainst}였는데, ${flowSentence} ${pickBySeed(praiseSentences, seed, 10)}
-
-${playerSentence} ${concernSentence}
-
-그래도 한 경기 한 경기 보면서 다음 경기 기대를 해보게 되는 것 같습니다. 너무 단정적으로 보기보다는, 지금 팀이 올라갈 수 있는 흐름을 만드는 과정이라고 생각하고 싶네요 ㅎㅎㅎ
-
-${pickBySeed(closingSentences, seed, 11)}`;
+  const body = [
+    "안녕하세요 토끼돼지입니다~~~!",
+    `${pickBySeed(introOpeners, seed, 9)} ${venue ? `${venue}에서 열린 경기였는데요, ` : ""}${summary} ㅎㅎ`,
+    `최종 스코어는 ${scoreFor}:${scoreAgainst}였는데, ${flowSentence} ${pickBySeed(praiseSentences, seed, 10)}`,
+    `${gameMetaSentence ? `${gameMetaSentence} ` : ""}${playerSentence}`.trim(),
+    `${pitcherDetailSentence} ${etcDetailSentence} ${defenseSentence}`.trim(),
+    breakingNewsSentence,
+    concernSentence,
+    "그래도 한 경기 한 경기 보면서 다음 경기 기대를 해보게 되는 것 같습니다. 너무 단정적으로 보기보다는, 지금 팀이 올라갈 수 있는 흐름을 만드는 과정이라고 생각하고 싶네요 ㅎㅎㅎ",
+    pickBySeed(closingSentences, seed, 11),
+  ].filter((paragraph) => paragraph && paragraph.trim().length > 0).join("\n\n");
   return {
     title,
     summary,
