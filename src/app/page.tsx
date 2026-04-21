@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import type { PostListItem } from "@/lib/types";
 
@@ -18,6 +19,7 @@ function statusLabel(status: string) {
 }
 
 export default async function HomePage() {
+  noStore();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("posts")

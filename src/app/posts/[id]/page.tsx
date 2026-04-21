@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 import { notFound } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import type { ImageCandidate, PostDetail } from "@/lib/types";
@@ -14,6 +15,7 @@ function resultLabel(result: string | null) {
 }
 
 export default async function PostDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  noStore();
   const { id } = await params;
   const supabase = getSupabaseAdmin();
 
